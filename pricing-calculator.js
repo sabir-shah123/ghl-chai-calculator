@@ -1091,5 +1091,3 @@
         console.log("GHL Price Calculator – Sub Product now multi-select");
 
     })();
-
-
