@@ -1,455 +1,1095 @@
-/* ===============================
-   GHL Price Calculator
-   External Safe Script
-================================ */
 
-(function () {
 
-    var TAX_RATE = 0.10;
+ 
 
-    /* ================= CONFIG ================= */
+    (function () {
 
-    var CONFIG = {
-        labels: {
-            product: "Primary System Type",
-            subProducts: "Water Treatment Configuration",
-            addons: "Select Add-ons",
-            discount: "Approved Discount Amount",
-            finalPrice: "Final Price",
-            deposit: "Deposit Amount Payable Today",
-            balance: "Balance Amount",
-            totalAmount: "Total Amount",
+        let lastPriceSummaryHash = "";
 
-            addonsAmount: "Add Ons Amount",
-            tapsAmount: "Taps Amount",
-            plumbingExtrasAmount: "Plumbing Extras Amount",
-            otherExtrasAmount: "Other Extras Amount"
-        },
+        let renderTimer = null;
 
-        checkboxGroups: {
-            taps: "Mixer Tap Required",
-            plumbing: "Plumbing Extras Required",
-            extras: "Additional Extras"
-        }
-    };
+        
 
-    /* ================= PRICES ================= */
+        // ────────────────────────────────────────────────
 
-    var productPrices = {
+        // CONFIG – change these when form labels change
 
-        "Full Home POE (Point of Entry) FHF-20": 4620,
-        "Full Home POE (Point of Entry) FHF-10": 4220,
-        "Full Home 4 Stage UV System FHF-UV-20": 4990,
+        // ────────────────────────────────────────────────
 
-        "(RO) Reverse Osmosis 5 stage FH-RO TANKLESS": 1590,
-        "(UF) Ultra Filtration & Mineralised 5 Stage (Tankless & NON electric)": 979
-    };
+        const CONFIG = {
 
-    var addonPrices = {
+            labels: {
 
-        "Filters - Shower Purifier": 65,
-        "Shower Purifier": 215,
-        "Additional Plumbing RO/UF": 141,
-        "Pipe work after 2m from POE": 40,
-        "Additional Plumbing": 141,
-        "20mm Pressure Reduction Valve (PRV)": 196,
+                product: "Primary System Type",
 
-        "Stand Alone Posts": 88,
+                subProducts: "Water Treatment Configuration",
 
-        "FMW 3 Way Mixer Tap - Pullout BG": 495,
-        "Installation of Customer Own Sourced Tap": 65,
+                addons: "Select Add-ons",
 
-        "FMW 3 Way Mixer Tap - Pullout MB": 495,
-        "FMW 3 Way Mixer Tap - Pullout BS": 485,
+                discount: "Approved Discount Amount",
 
-        "FMW 3 Way Mixer Tap - Standard Gold": 395,
-        "FMW 3 Way Mixer Tap - Standard": 395,
+                finalPrice: "Final Price",
 
-        "Customer supplied separate 2 way Mixer tap": 65,
-        "Drill into stone": 120,
-        "Line Tracing": 330,
+                deposit: "Deposit Amount Payable Today",
 
-        "ABI 3 way Mixer Tap - Brushed Gold & Matt Black": 884,
-        "Powder Coating": 195
-    };
+                balance: "Balance Amount",
 
-    /* ================= CACHE ================= */
+                totalAmount: "Total Amount",
 
-    var el = {};
+                // fields to save the collective amounts of taps, plumbing extras, and other extras and addons (if needed for record-keeping)
 
-    /* ================= HELPERS ================= */
+                addonsAmount: "Add Ons Amount",
 
-    function findByLabel(label) {
+                tapsAmount: "Taps Amount",
 
-        var labels = document.querySelectorAll(".field-label, label.label-alignment");
+                plumbingExtrasAmount: "Plumbing Extras Amount",
 
-        for (var i = 0; i < labels.length; i++) {
+                otherExtrasAmount: "Other Extras Amount"
 
-            var txt = labels[i].textContent.trim();
+            },
 
-            if (txt.indexOf(label) === 0) {
+            checkboxGroups: {
 
-                var id = labels[i].getAttribute("for");
+                taps: {
 
-                if (id) return document.getElementById(id);
+                    label: "Mixer Tap Required",
 
-                var wrap = labels[i].closest(".form-builder--item");
+                    name: "selected_taps"          // fallback
 
-                if (wrap) return wrap.querySelector("input, textarea");
+                },
+
+                plumbing: {
+
+                    label: "Plumbing Extras Required",
+
+                    name: "selected_plumbing_extras"
+
+                },
+
+                otherExtras: {
+
+                    label: "Additional Extras",
+
+                    name: "select_other_extras"
+
+                }
 
             }
-        }
 
-        return null;
-    }
+        };
 
-    function findTags(label) {
+        // ────────────────────────────────────────────────
 
-        var input = findByLabel(label);
+        // PRICES (AUD)
 
-        if (!input) return null;
+        // ────────────────────────────────────────────────
 
-        var wrap = input.closest(".multiselect");
+        const productPrices = {
 
-        if (!wrap) return null;
+            // Main products
 
-        return wrap.querySelector(".multiselect__tags");
-    }
+            "Full Home POE (Point of Entry) FHF-20": 4620,
 
-    function findCheckboxes(label) {
+            "Full Home POE (Point of Entry) FHF-10": 4220,
 
-        var labels = document.querySelectorAll(".field-label, label.label-alignment");
+            "Full Home 4 Stage UV System FHF-UV-20": 4990,
 
-        for (var i = 0; i < labels.length; i++) {
+            // Sub-products – can now select multiple
 
-            if (labels[i].textContent.trim() === label) {
+            "(RO) Reverse Osmosis 5 stage FH-RO TANKLESS": 1590,
 
-                var wrap = labels[i].closest(".form-builder--item");
+            "(UF) Ultra Filtration & Mineralised 5 Stage (Tankless & NON electric)": 979
 
-                if (!wrap) return [];
+        };
 
-                return wrap.querySelectorAll("input[type=checkbox]");
-            }
-        }
+        const addonPrices = {
 
-        return [];
-    }
+            // Add-ons multiselect
 
-    function safeSet(input, val) {
+            "Filters - Shower Purifier": 65,
 
-        if (!input) return;
+            "Shower Purifier": 215,
 
-        input.value = Number(val).toFixed(2);
+            "Additional Plumbing RO/UF": 141,
 
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-    }
+            "Pipe work after 2m from POE": 40,
 
-    function sum(arr, map) {
+            "Additional Plumbing": 141,
 
-        var t = 0;
+            "20mm Pressure Reduction Valve (PRV)": 196,
 
-        for (var i = 0; i < arr.length; i++) {
-            t += map[arr[i]] || 0;
-        }
+            "Stand Alone Posts": 88,
 
-        return t;
-    }
+            "FMW 3 Way Mixer Tap - Pullout BG": 495,
 
-    /* ================= MAP FIELDS ================= */
+            "Installation of Customer Own Sourced Tap": 65,
 
-    function mapFields() {
+            "FMW 3 Way Mixer Tap - Pullout MB": 495,
 
-        el.product = findTags(CONFIG.labels.product);
-        el.sub = findTags(CONFIG.labels.subProducts);
-        el.addons = findTags(CONFIG.labels.addons);
+            "FMW 3 Way Mixer Tap - Pullout BS": 485,
 
-        el.taps = findCheckboxes(CONFIG.checkboxGroups.taps);
-        el.plumbing = findCheckboxes(CONFIG.checkboxGroups.plumbing);
-        el.extras = findCheckboxes(CONFIG.checkboxGroups.extras);
+            "FMW 3 Way Mixer Tap - Standard Gold": 395,
 
-        el.discount = findByLabel(CONFIG.labels.discount);
-        el.final = findByLabel(CONFIG.labels.finalPrice);
-        el.deposit = findByLabel(CONFIG.labels.deposit);
-        el.balance = findByLabel(CONFIG.labels.balance);
-        el.total = findByLabel(CONFIG.labels.totalAmount);
+            "FMW 3 Way Mixer Tap - Standard": 395,
 
-        el.addonsTotal = findByLabel(CONFIG.labels.addonsAmount);
-        el.tapsTotal = findByLabel(CONFIG.labels.tapsAmount);
-        el.plumbTotal = findByLabel(CONFIG.labels.plumbingExtrasAmount);
-        el.extraTotal = findByLabel(CONFIG.labels.otherExtrasAmount);
+            "SKU: [Matte Black-TAP-STD3-PO-MB] FMW 3 Way Mixer Tap - Pullout": 495,
 
-        var ro = [
-            el.final,
-            el.balance,
-            el.total,
-            el.addonsTotal,
-            el.tapsTotal,
-            el.plumbTotal,
-            el.extraTotal
-        ];
+            "SKU: [Brushed Gold-TAP-STD3-PO-BG] FMW 3 Way Mixer Tap - Pullout": 495,
 
-        for (var i = 0; i < ro.length; i++) {
-            if (ro[i]) ro[i].readOnly = true;
-        }
-    }
+            "SKU: [Stainless-TAP-STD3-PO-BS] FMW 3 Way Mixer Tap - Pullout": 455,
 
-    /* ================= GET VALUES ================= */
+            "SKU: [Matte Black TAP-STD3-MB] FMW 3 Way Mixer Tap - Standard": 395,
 
-    function getSingle(tags) {
+            "SKU: [Brushed Gold TAP-STD3-BG] FMW 3 Way Mixer Tap - Standard": 395,
 
-        if (!tags) return "";
+            "SKU: [Stainless TAP-STD3-BS] FMW 3 Way Mixer Tap - Standard": 355,
 
-        var s = tags.querySelector(".multiselect__single");
+            // Taps (checkboxes)
 
-        return s ? s.textContent.trim() : "";
-    }
+            "Black 2-way tap for RO & 1-Way for UF only": 65,
 
-    function getMulti(tags) {
+            "SKU: [Stainless TAP-STD3-BS] FMW 3 Way Mixer Tap - Standard": 355,
 
-        if (!tags) return [];
+            // Plumbing Extras (checkboxes)
 
-        var spans = tags.querySelectorAll(".multiselect__tag span:first-child");
+            "Customer supplied separate 2 way Mixer tap": 65,
 
-        var arr = [];
+            "Drill into stone": 120,
 
-        for (var i = 0; i < spans.length; i++) {
-            arr.push(spans[i].textContent.trim());
-        }
+            "Line Tracing": 330,
 
-        return arr;
-    }
+            // Other Extras (checkboxes)
 
-    function getChecked(list) {
+            "ABI 3 way Mixer Tap - Brushed Gold & Matt Black": 884,
 
-        var arr = [];
+            "Powder Coating": 195
 
-        for (var i = 0; i < list.length; i++) {
+        };
 
-            if (list[i].checked) arr.push(list[i].value.trim());
-        }
+        // ────────────────────────────────────────────────
 
-        return arr;
-    }
+        // DOM cache
 
-    /* ================= SUMMARY UI ================= */
+        // ────────────────────────────────────────────────
 
-    function render(data) {
+        let elements = {
 
-        var submit = document.querySelector(".form-builder--btn-submit");
+            productTags: null,
 
-        if (!submit) return;
+            subProductsTags: null,          // ← renamed for clarity (plural)
 
-        var box = document.getElementById("price-summary-container");
+            addonTags: null,
 
-        if (!box) {
+            tapsCheckboxes: [],
 
-            box = document.createElement("div");
+            plumbingCheckboxes: [],
 
-            box.id = "price-summary-container";
+            otherExtrasCheckboxes: [],
 
-            submit.parentNode.insertBefore(box, submit);
-        }
+            discountInput: null,
 
-        var html = "";
+            finalInput: null,
 
-        html += "<h3>📄 Price Summary</h3>";
+            depositInput: null,
 
-        if (data.mainPrice > 0) {
-            html += "<div><b>Main:</b> " +
-                data.mainProduct +
-                " — $" +
-                data.mainPrice.toLocaleString() +
-                "</div>";
-        }
+            balanceInput: null,
 
-        function section(title, items) {
+            totalAmountInput: null
 
-            if (!items.length) return "";
+        };
 
-            var total = sum(items, addonPrices);
+        // ────────────────────────────────────────────────
 
-            var s = "<div class='price-section'>";
+        // Helpers: find by label
 
-            s += "<div class='price-section-header'>" +
-                title +
-                " $" +
-                total.toLocaleString() +
-                "</div>";
+        // ────────────────────────────────────────────────
 
-            for (var i = 0; i < items.length; i++) {
+        function findInputByLabel(labelText) {
 
-                var p = addonPrices[items[i]] || 0;
+            const labels = document.querySelectorAll('.field-label, label.label-alignment');
 
-                s += "<div class='price-row'>" +
-                    "<span>• " + items[i] + "</span>" +
-                    "<span>$" + p.toLocaleString() + "</span>" +
-                    "</div>";
+            for (const label of labels) {
+
+                let text = label.textContent.trim();
+
+                if (text === labelText || text.startsWith(labelText)) {
+
+                    let forId = label.getAttribute('for');
+
+                    if (forId) return document.getElementById(forId);
+
+                    const input = label.closest('.form-field-wrapper, .form-builder--item')
+
+                        ?.querySelector('input, textarea, .multiselect');
+
+                    if (input) return input;
+
+                }
+
             }
 
-            s += "</div>";
+            return null;
 
-            return s;
         }
 
-        html += section("Add-ons", data.addons);
-        html += section("Taps", data.taps);
-        html += section("Plumbing", data.plumbing);
-        html += section("Extras", data.extras);
+        function findMultiselectTagsByLabel(labelText) {
 
-        html += "<hr>";
+            const container = findInputByLabel(labelText)?.closest('.multiselect');
 
-        html += "<div class='price-total-row'><span>Subtotal</span><span>$" +
-            data.subtotal.toFixed(2) +
-            "</span></div>";
+            return container?.querySelector('.multiselect__tags') || null;
 
-        if (data.discount > 0) {
-
-            html += "<div class='price-total-row price-discount'><span>Discount</span><span>-$" +
-                data.discount.toFixed(2) +
-                "</span></div>";
         }
 
-        html += "<div class='price-final'><span>Final</span><span>$" +
-            data.final.toFixed(2) +
-            "</span></div>";
+        function findCheckboxesByGroupLabel(groupLabel) {
 
-        if (data.deposit > 0) {
+            const labelEl = Array.from(document.querySelectorAll('.field-label, label.label-alignment'))
 
-            html += "<div class='price-total-row'><span>Deposit</span><span>$" +
-                data.deposit.toFixed(2) +
-                "</span></div>";
+                .find(el => el.textContent.trim() === groupLabel);
+
+            if (!labelEl) return [];
+
+            const container = labelEl.closest('.form-field-wrapper, .form-builder--item');
+
+            return container ? Array.from(container.querySelectorAll('input[type="checkbox"]')) : [];
+
         }
 
-        if (data.balance > 0) {
+        // ────────────────────────────────────────────────
 
-            html += "<div class='price-balance'><span>Balance Due</span><span>$" +
-                data.balance.toFixed(2) +
-                "</span></div>";
+        // Gather all elements
+
+        // ────────────────────────────────────────────────
+
+        function findFormElements() {
+
+            elements.productTags = findMultiselectTagsByLabel(CONFIG.labels.product);
+
+            elements.subProductsTags = findMultiselectTagsByLabel(CONFIG.labels.subProducts);
+
+            elements.addonTags = findMultiselectTagsByLabel(CONFIG.labels.addons);
+
+            elements.tapsCheckboxes = findCheckboxesByGroupLabel(CONFIG.checkboxGroups.taps.label);
+
+            elements.plumbingCheckboxes = findCheckboxesByGroupLabel(CONFIG.checkboxGroups.plumbing.label);
+
+            elements.otherExtrasCheckboxes = findCheckboxesByGroupLabel(CONFIG.checkboxGroups.otherExtras.label);
+
+            elements.discountInput = findInputByLabel(CONFIG.labels.discount);
+
+            elements.finalInput = findInputByLabel(CONFIG.labels.finalPrice);
+
+            elements.depositInput = findInputByLabel(CONFIG.labels.deposit);
+
+            elements.balanceInput = findInputByLabel(CONFIG.labels.balance);
+
+            elements.totalAmountInput = findInputByLabel(CONFIG.labels.totalAmount);
+
+            // Optional: also find inputs for the collective amounts of taps, plumbing extras, other extras and addons if needed
+
+            elements.addonsAmountInput = findInputByLabel(CONFIG.labels.addonsAmount);
+
+            elements.tapsAmountInput = findInputByLabel(CONFIG.labels.tapsAmount);
+
+            elements.plumbingExtrasAmountInput = findInputByLabel(CONFIG.labels.plumbingExtrasAmount);
+
+            elements.otherExtrasAmountInput = findInputByLabel(CONFIG.labels.otherExtrasAmount);
+
+            // Make calculated fields read-only
+
+            [elements.finalInput, elements.balanceInput, elements.totalAmountInput, elements.addonsAmountInput, elements.tapsAmountInput, elements.plumbingExtrasAmountInput, elements.otherExtrasAmountInput].forEach(el => {
+
+                if (el) el.readOnly = true;
+
+            });
+
         }
 
-        box.innerHTML = html;
+        // ────────────────────────────────────────────────
+
+        // Get selections
+
+        // ────────────────────────────────────────────────
+
+        function getSelectedProduct() {
+
+            if (!elements.productTags) return '';
+
+            const single = elements.productTags.querySelector('.multiselect__single');
+
+            return single ? single.textContent.trim() : '';
+
+        }
+
+        function getSelectedSubProducts() {
+
+            if (!elements.subProductsTags) return [];
+
+            return Array.from(
+
+                elements.subProductsTags.querySelectorAll('.multiselect__tag span:first-child')
+
+            ).map(span => span.textContent.trim());
+
+        }
+
+        function getSelectedAddons() {
+
+            if (!elements.addonTags) return [];
+
+            return Array.from(
+
+                elements.addonTags.querySelectorAll('.multiselect__tag span:first-child')
+
+            ).map(span => span.textContent.trim());
+
+        }
+
+        function getCheckedValues(checkboxes) {
+
+            return Array.from(checkboxes || [])
+
+                .filter(cb => cb.checked)
+
+                .map(cb => cb.value.trim());
+
+        }
+
+        // ────────────────────────────────────────────────
+
+        // Safe value setter
+
+        // ────────────────────────────────────────────────
+
+        function setValueSafely(input, value) {
+
+            if (!input) return;
+
+            const str = Number(value).toFixed(2);
+
+            const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+
+            nativeSet.call(input, '');
+
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+
+            nativeSet.call(input, str);
+
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+
+            input.value = str;
+
+        }
+
+        // ────────────────────────────────────────────────
+
+        // Render Pricing Summary 
+
+        // ────────────────────────────────────────────────
+
+        function renderTableSection(title, items, priceMap) {
+
+  if (!items.length) return "";
+
+  let total = 0;
+
+  let rows = "";
+
+  items.forEach(item => {
+
+    const price = priceMap[item] || 0;
+
+    total += price;
+
+    rows += `
+
+      <div style="display:flex;justify-content:space-between;padding:2px 0;">
+
+        <span style="padding-left:12px;">• ${item}</span>
+
+        <span>$${price.toLocaleString()}</span>
+
+      </div>
+
+    `;
+
+  });
+
+  return `
+
+    <div style="margin-bottom:12px;">
+
+      <div style="
+
+        display:flex;
+
+        justify-content:space-between;
+
+        font-weight:600;
+
+        background:#f1f5f9;
+
+        padding:6px 8px;
+
+        border-radius:4px;
+
+      ">
+
+        <span>${title}</span>
+
+        <span>$${total.toLocaleString()}</span>
+
+      </div>
+
+      ${rows}
+
+    </div>
+
+  `;
+
+}
+
+     function renderPriceSummary(data) {
+
+  // Prevent infinite loops
+
+  const hash = JSON.stringify(data);
+
+  if (hash === lastPriceSummaryHash) {
+
+    return;
+
+  }
+
+  lastPriceSummaryHash = hash;
+
+  clearTimeout(renderTimer);
+
+  renderTimer = setTimeout(() => {
+
+    const {
+
+      mainProduct, mainPrice,
+
+      subProducts, subProductsTotal,
+
+      addons, addonsTotal,
+
+      taps, tapsTotal,
+
+      plumbing, plumbingTotal,
+
+      extras, extrasTotal,
+
+      subtotal, discount, final, deposit, balance
+
+    } = data;
+
+    const submitWrapper = document.querySelector(
+
+      '.form-builder--item.form-builder--btn-submit'
+
+    );
+
+    if (!submitWrapper) return;
+
+    let container = document.getElementById('price-summary-container');
+
+    const shouldShow =
+
+      subtotal > 0 ||
+
+      discount > 0 ||
+
+      deposit > 0 ||
+
+      final > 0;
+
+    if (!shouldShow) {
+
+      if (container) container.remove();
+
+      return;
+
     }
 
-    /* ================= CALC ================= */
+    // Create container once
 
-    function calculate() {
+    if (!container) {
 
-        var main = getSingle(el.product);
+      container = document.createElement('div');
 
-        var subs = getMulti(el.sub);
-        var addons = getMulti(el.addons);
+      container.id = 'price-summary-container';
 
-        var taps = getChecked(el.taps);
-        var plumbing = getChecked(el.plumbing);
-        var extras = getChecked(el.extras);
+      container.style.cssText = `
 
-        var mainPrice = productPrices[main] || 0;
+        background:#ffffff;
 
-        var subTotal = sum(subs, productPrices);
-        var addonTotal = sum(addons, addonPrices);
-        var tapsTotal = sum(taps, addonPrices);
-        var plumbTotal = sum(plumbing, addonPrices);
-        var extraTotal = sum(extras, addonPrices);
+        border:1px solid #e5e7eb;
 
-        var subtotal =
-            mainPrice +
-            subTotal +
-            addonTotal +
-            tapsTotal +
-            plumbTotal +
-            extraTotal;
+        border-radius:8px;
 
-        safeSet(el.total, subtotal);
+        padding:18px;
 
-        safeSet(el.addonsTotal, addonTotal);
-        safeSet(el.tapsTotal, tapsTotal);
-        safeSet(el.plumbTotal, plumbTotal);
-        safeSet(el.extraTotal, extraTotal);
+        margin:0 0 24px 0;
 
-        var discount = Number(el.discount && el.discount.value) || 0;
+        font-family:Inter,sans-serif;
 
-        if (discount > subtotal) discount = subtotal;
+        font-size:14.5px;
 
-        var after = subtotal - discount;
+        color:#1f2933;
 
-        var tax = after * TAX_RATE;
+        box-shadow:0 1px 3px rgba(0,0,0,0.08);
 
-        var final = after + tax;
+      `;
 
-        safeSet(el.final, final);
+      submitWrapper.parentNode.insertBefore(
 
-        var deposit = Number(el.deposit && el.deposit.value) || 0;
+        container,
 
-        if (deposit > final) deposit = final;
+        submitWrapper
 
-        var balance = final - deposit;
+      );
 
-        safeSet(el.balance, balance);
-
-        render({
-            mainProduct: main,
-            mainPrice: mainPrice,
-
-            addons: addons,
-            taps: taps,
-            plumbing: plumbing,
-            extras: extras,
-
-            subtotal: subtotal,
-            discount: discount,
-            final: final,
-            deposit: deposit,
-            balance: balance
-        });
     }
 
-    /* ================= WATCH ================= */
+    // ===============================
 
-    function attach() {
+    // Build HTML
 
-        var obs = new MutationObserver(calculate);
+    // ===============================
 
-        if (el.product) obs.observe(el.product, { childList: true, subtree: true });
-        if (el.sub) obs.observe(el.sub, { childList: true, subtree: true });
-        if (el.addons) obs.observe(el.addons, { childList: true, subtree: true });
+    let html = `
 
-        var list = []
-            .concat(Array.from(el.taps || []))
-            .concat(Array.from(el.plumbing || []))
-            .concat(Array.from(el.extras || []));
+      <div>
 
-        for (var i = 0; i < list.length; i++) {
-            list[i].addEventListener("change", calculate);
-        }
+        <h3 style="
 
-        if (el.discount)
-            el.discount.addEventListener("input", calculate);
+          margin:0 0 14px;
 
-        if (el.deposit)
-            el.deposit.addEventListener("input", calculate);
+          font-size:1.3rem;
 
-        calculate();
+          color:#0f172a;
+
+          border-bottom:2px solid #e5e7eb;
+
+          padding-bottom:6px;
+
+        ">
+
+          📄 Price Summary
+
+        </h3>
+
+    `;
+
+    // Main product
+
+    if (mainPrice > 0) {
+
+      html += `
+
+        <div style="
+
+          display:flex;
+
+          justify-content:space-between;
+
+          font-weight:700;
+
+          font-size:15px;
+
+          margin-bottom:14px;
+
+        ">
+
+          <span>Main System: ${mainProduct}</span>
+
+          <span>$${mainPrice.toLocaleString()}</span>
+
+        </div>
+
+      `;
+
     }
 
-    /* ================= INIT ================= */
+    // Sections
 
-    function init() {
+    html += renderTableSection(
 
-        mapFields();
+      "Sub Products",
 
-        attach();
+      subProducts,
+
+      productPrices
+
+    );
+
+    html += renderTableSection(
+
+      "Add-ons",
+
+      addons,
+
+      addonPrices
+
+    );
+
+    html += renderTableSection(
+
+      "Taps",
+
+      taps,
+
+      addonPrices
+
+    );
+
+    html += renderTableSection(
+
+      "Plumbing",
+
+      plumbing,
+
+      addonPrices
+
+    );
+
+    html += renderTableSection(
+
+      "Extras",
+
+      extras,
+
+      addonPrices
+
+    );
+
+    // Divider
+
+    html += `<hr style="margin:14px 0;border-color:#e5e7eb;">`;
+
+    // Subtotal
+
+    html += `
+
+      <div style="
+
+        display:flex;
+
+        justify-content:space-between;
+
+        font-weight:600;
+
+        margin-bottom:4px;
+
+      ">
+
+        <span>Subtotal</span>
+
+        <span>$${subtotal.toLocaleString()}</span>
+
+      </div>
+
+    `;
+
+    // Discount
+
+    if (discount > 0) {
+
+      html += `
+
+        <div style="
+
+          display:flex;
+
+          justify-content:space-between;
+
+          color:#dc2626;
+
+          margin-bottom:6px;
+
+        ">
+
+          <span>Discount</span>
+
+          <span>-$${discount.toLocaleString()}</span>
+
+        </div>
+
+      `;
+
     }
 
-    var root = document.querySelector("#_builder-form") || document.body;
+    // Final
 
-    new MutationObserver(init).observe(root, {
-        childList: true,
-        subtree: true
+    html += `
+
+      <div style="
+
+        display:flex;
+
+        justify-content:space-between;
+
+        margin:12px 0;
+
+        font-size:1.2rem;
+
+        font-weight:700;
+
+        color:#047857;
+
+      ">
+
+        <span>Final Price</span>
+
+        <span>$${final.toLocaleString()}</span>
+
+      </div>
+
+    `;
+
+    // Deposit
+
+    if (deposit > 0) {
+
+      html += `
+
+        <div style="
+
+          display:flex;
+
+          justify-content:space-between;
+
+          margin-bottom:4px;
+
+        ">
+
+          <span>Deposit Paid</span>
+
+          <span>$${deposit.toLocaleString()}</span>
+
+        </div>
+
+      `;
+
+    }
+
+    // Balance
+
+    if (balance > 0) {
+
+      html += `
+
+        <div style="
+
+          display:flex;
+
+          justify-content:space-between;
+
+          font-weight:700;
+
+          color:#1d4ed8;
+
+          background:#eef2ff;
+
+          padding:6px 8px;
+
+          border-radius:4px;
+
+          margin-top:6px;
+
+        ">
+
+          <span>Balance Due</span>
+
+          <span>$${balance.toLocaleString()}</span>
+
+        </div>
+
+      `;
+
+    }
+
+    html += `</div>`;
+
+    container.innerHTML = html;
+
+  }, 120); // debounce delay
+
+}
+
+        // ────────────────────────────────────────────────
+
+        // Calculation + Validation
+
+        // ────────────────────────────────────────────────
+
+       function calculateAndValidate() {
+
+    const mainProduct = getSelectedProduct();
+
+    const subProducts = getSelectedSubProducts(); // array
+
+    const addons = getSelectedAddons();
+
+    const taps = getCheckedValues(elements.tapsCheckboxes);
+
+    const plumbing = getCheckedValues(elements.plumbingCheckboxes);
+
+    const extras = getCheckedValues(elements.otherExtrasCheckboxes);
+
+    let subtotal = 0;
+
+    // -------------------------------
+
+    // Totals
+
+    // -------------------------------
+
+    const mainPrice = productPrices[mainProduct] || 0;
+
+    const subProductsTotal = subProducts.reduce(
+
+        (s, item) => s + (productPrices[item] || 0),
+
+        0
+
+    );
+
+    const addonsTotal = addons.reduce(
+
+        (s, item) => s + (addonPrices[item] || 0),
+
+        0
+
+    );
+
+    const tapsTotal = taps.reduce(
+
+        (s, item) => s + (addonPrices[item] || 0),
+
+        0
+
+    );
+
+    const plumbingTotal = plumbing.reduce(
+
+        (s, item) => s + (addonPrices[item] || 0),
+
+        0
+
+    );
+
+    const extrasTotal = extras.reduce(
+
+        (s, item) => s + (addonPrices[item] || 0),
+
+        0
+
+    );
+
+    // -------------------------------
+
+    // Fill individual amount fields
+
+    // -------------------------------
+
+    setValueSafely(elements.addonsAmountInput, addonsTotal);
+
+    setValueSafely(elements.tapsAmountInput, tapsTotal);
+
+    setValueSafely(elements.plumbingExtrasAmountInput, plumbingTotal);
+
+    setValueSafely(elements.otherExtrasAmountInput, extrasTotal);
+
+    // -------------------------------
+
+    // Subtotal
+
+    // -------------------------------
+
+    subtotal =
+
+        mainPrice +
+
+        subProductsTotal +
+
+        addonsTotal +
+
+        tapsTotal +
+
+        plumbingTotal +
+
+        extrasTotal;
+
+    setValueSafely(elements.totalAmountInput, subtotal);
+
+    // -------------------------------
+
+    // Discount
+
+    // -------------------------------
+
+    let discount = Number(elements.discountInput?.value) || 0;
+
+    if (discount > subtotal) {
+
+        discount = subtotal;
+
+        setValueSafely(elements.discountInput, discount);
+
+        alert("Discount cannot exceed the subtotal.");
+
+    }
+
+    // -------------------------------
+
+    // Final / Deposit / Balance
+
+    // -------------------------------
+
+    const final = Math.max(0, subtotal - discount);
+
+    setValueSafely(elements.finalInput, final);
+
+    let deposit = Number(elements.depositInput?.value) || 0;
+
+    if (deposit > final) {
+
+        deposit = final;
+
+        setValueSafely(elements.depositInput, deposit);
+
+        alert("Deposit cannot exceed the Final Price.");
+
+    }
+
+    const balance = Math.max(0, final - deposit);
+
+    setValueSafely(elements.balanceInput, balance);
+
+    // -------------------------------
+
+    // 🔥 Render Summary
+
+    // -------------------------------
+
+    renderPriceSummary({
+
+        mainProduct,
+
+        mainPrice,
+
+        subProducts,
+
+        subProductsTotal,
+
+        addons,
+
+        addonsTotal,
+
+        taps,
+
+        tapsTotal,
+
+        plumbing,
+
+        plumbingTotal,
+
+        extras,
+
+        extrasTotal,
+
+        subtotal,
+
+        discount,
+
+        final,
+
+        deposit,
+
+        balance
+
     });
 
-    init();
+}
 
-    console.log("GHL Calculator Loaded");
+        // ────────────────────────────────────────────────
 
-})();
+        // Listeners & Observers
+
+        // ────────────────────────────────────────────────
+
+        function attachListenersAndObservers() {
+
+            const obsCfg = { childList: true, subtree: true, characterData: true };
+
+            // Watch all multiselect tags
+
+            [elements.productTags, elements.subProductsTags, elements.addonTags]
+
+                .forEach(el => {
+
+                    if (el) new MutationObserver(calculateAndValidate).observe(el, obsCfg);
+
+                });
+
+            // Watch checkboxes
+
+            [...elements.tapsCheckboxes, ...elements.plumbingCheckboxes, ...elements.otherExtrasCheckboxes]
+
+                .forEach(cb => {
+
+                    cb.removeEventListener('change', calculateAndValidate);
+
+                    cb.addEventListener('change', calculateAndValidate);
+
+                });
+
+            // Watch manual inputs
+
+            [elements.discountInput, elements.depositInput].forEach(input => {
+
+                if (input) {
+
+                    input.removeEventListener('input', calculateAndValidate);
+
+                    input.addEventListener('input', calculateAndValidate);
+
+                }
+
+            });
+
+            calculateAndValidate(); // initial run
+
+        }
+
+        // ────────────────────────────────────────────────
+
+        // Form mutation observer (handles GHL re-renders)
+
+        // ────────────────────────────────────────────────
+
+        const container = document.querySelector('#_builder-form') || document.body;
+
+        new MutationObserver(() => {
+
+            findFormElements();
+
+            attachListenersAndObservers();
+
+        }).observe(container, { childList: true, subtree: true });
+
+        // Initial setup
+
+        findFormElements();
+
+        attachListenersAndObservers();
+
+        console.log("GHL Price Calculator – Sub Product now multi-select");
+
+    })();
+
+
